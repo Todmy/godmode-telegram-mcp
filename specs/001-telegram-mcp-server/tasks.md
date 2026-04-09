@@ -92,10 +92,10 @@
 
 **Independent Test**: Search keyword → verify matches from multiple channels with source attribution
 
-- [ ] T021 [P] [US4] Implement search_messages operation in src/tg_mcp/ops/messages.py — keyword search via Telethon global search across subscribed channels, date range filter (from/to), limit, return messages with channel attribution, sorted by relevance. TOON response
-- [ ] T022 [P] [US4] Implement get_message operation in src/tg_mcp/ops/messages.py — fetch single message by channel + message_id, return full content with all fields including media metadata (type, filename, size, download link per FR-022)
-- [ ] T023 [US4] Implement message_history operation in src/tg_mcp/ops/messages.py — paginated download of channel message history with date range, offset-based pagination, TOON response
-- [ ] T024 [US4] Implement who_posted_first operation in src/tg_mcp/ops/messages.py — search keyword across channels, group by channel, sort by earliest match date, return chronological list of channels with timestamps
+- [x] T021 [P] [US4] Implement search_messages operation in src/tg_mcp/ops/messages.py — keyword search via Telethon global search across subscribed channels, date range filter (from/to), limit, return messages with channel attribution, sorted by relevance. TOON response
+- [x] T022 [P] [US4] Implement get_message operation in src/tg_mcp/ops/messages.py — fetch single message by channel + message_id, return full content with all fields including media metadata (type, filename, size, download link per FR-022)
+- [x] T023 [US4] Implement message_history operation in src/tg_mcp/ops/messages.py — paginated download of channel message history with date range, offset-based pagination, TOON response
+- [x] T024 [US4] Implement who_posted_first operation in src/tg_mcp/ops/messages.py — search keyword across channels, group by channel, sort by earliest match date, return chronological list of channels with timestamps
 
 **Checkpoint**: `tg_execute op="search_messages" params={"query":"AI governance","hours":168}` returns cross-channel results
 
@@ -107,10 +107,10 @@
 
 **Independent Test**: React to a message → verify reaction applied with updated count
 
-- [ ] T025 [P] [US5] Implement react_to_message operation in src/tg_mcp/ops/interact.py — add emoji reaction to message by channel + message_id, validate emoji against Telegram supported set, return confirmation with updated reaction count
-- [ ] T026 [P] [US5] Implement send_comment operation in src/tg_mcp/ops/interact.py — post comment text on channel message in linked discussion group, return confirmation with comment ID
-- [ ] T027 [P] [US5] Implement forward_message operation in src/tg_mcp/ops/interact.py — forward message to Saved Messages (default) or specified chat, return confirmation
-- [ ] T028 [US5] Implement mark_read operation in src/tg_mcp/ops/interact.py — mark all messages in channel as read, invalidate unread cache, return confirmation with previous unread count
+- [x] T025 [P] [US5] Implement react_to_message operation in src/tg_mcp/ops/interact.py — add emoji reaction to message by channel + message_id, validate emoji against Telegram supported set, return confirmation with updated reaction count
+- [x] T026 [P] [US5] Implement send_comment operation in src/tg_mcp/ops/interact.py — post comment text on channel message in linked discussion group, return confirmation with comment ID
+- [x] T027 [P] [US5] Implement forward_message operation in src/tg_mcp/ops/interact.py — forward message to Saved Messages (default) or specified chat, return confirmation
+- [x] T028 [US5] Implement mark_read operation in src/tg_mcp/ops/interact.py — mark all messages in channel as read, invalidate unread cache, return confirmation with previous unread count
 
 **Checkpoint**: `tg_execute op="react_to_message" params={"channel":"@example","message_id":123,"emoji":"fire"}` succeeds
 
