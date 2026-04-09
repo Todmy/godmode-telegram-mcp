@@ -392,6 +392,108 @@ async def move_to_folder(
 
 
 # ---------------------------------------------------------------------------
+# remove_from_folder
+# ---------------------------------------------------------------------------
+
+
+@operation(
+    name="remove_from_folder",
+    category="folders",
+    description="Remove a channel from a folder without unsubscribing",
+    destructive=False,
+    idempotent=True,
+)
+async def remove_from_folder(
+    client: Any,
+    channel: str,
+    folder: str,
+    cache: Cache | None = None,
+) -> str:
+    """Remove a channel from a folder."""
+    if not channel or not channel.strip():
+        raise OperationError(
+            what="channel parameter is required",
+            expected="@handle, t.me link, or channel title",
+            example='tg_execute op="remove_from_folder" params={"channel": "@handle", "folder": "Tech"}',
+            recovery="provide a channel identifier",
+        )
+    if not folder or not folder.strip():
+        raise OperationError(
+            what="folder parameter is required",
+            expected="folder title or numeric ID",
+            example='tg_execute op="remove_from_folder" params={"channel": "@handle", "folder": "Tech"}',
+            recovery='use tg_execute op="list_folders" to see folders',
+        )
+
+    channel = channel.strip()
+    folder = folder.strip()
+
+    entity = await _resolve_single_channel(client, channel)
+
+    try:
+        result = await client(GetDialogFiltersRequest())
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+
+    filters = result if isinstance(result, list) else getattr(result, "filters", result)
+
+    target_filter = None
+    for f in filters:
+        info = _extract_folder_info(f)
+        if info is None:
+            continue
+        if info["title"].lower() == folder.lower() or str(info["id"]) == folder:
+            target_filter = f
+            break
+
+    if target_filter is None:
+        raise OperationError(
+            what=f"Folder {folder!r} not found",
+            expected="existing folder title or ID",
+            example='tg_execute op="remove_from_folder" params={"channel": "@handle", "folder": "Tech"}',
+            recovery='use tg_execute op="list_folders" to see folders',
+        )
+
+    include_peers = list(getattr(target_filter, "include_peers", []) or [])
+    new_peers = [p for p in include_peers if _get_peer_id(p) != entity.id]
+
+    target_info = _extract_folder_info(target_filter)
+    title = target_info["title"] if target_info else folder
+
+    if len(new_peers) == len(include_peers):
+        handle = getattr(entity, "username", None)
+        handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
+        return f"{handle_display} is not in folder {title!r}."
+
+    target_filter.include_peers = new_peers
+
+    # Also remove from pinned_peers if present
+    pinned = list(getattr(target_filter, "pinned_peers", []) or [])
+    target_filter.pinned_peers = [p for p in pinned if _get_peer_id(p) != entity.id]
+
+    try:
+        await client(UpdateDialogFilterRequest(
+            id=target_filter.id,
+            filter=target_filter,
+        ))
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+    except Exception as exc:
+        logger.exception("ops.remove_from_folder_error")
+        raise OperationError(
+            what=f"Failed to update folder: {type(exc).__name__}: {exc}",
+            expected="successful folder update",
+            example='tg_execute op="remove_from_folder" params={"channel": "@handle", "folder": "Tech"}',
+            recovery="retry",
+        ) from exc
+
+    handle = getattr(entity, "username", None)
+    handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
+
+    return f"Removed {handle_display} from folder {title!r}."
+
+
+# ---------------------------------------------------------------------------
 # create_folder (T031)
 # ---------------------------------------------------------------------------
 
