@@ -149,9 +149,9 @@
 
 **Purpose**: Auth setup, documentation, end-to-end validation
 
-- [ ] T036 [P] Implement auth CLI in src/tg_mcp/auth.py — interactive phone + code + optional 2FA flow, create session file at ~/.tg-mcp/session.session with permission 600, invoked via `python -m tg_mcp.auth`
-- [ ] T037 [P] Create README.md — project description, prerequisites (Python 3.11+, Telegram API creds), setup steps (install, configure, auth, register MCP), usage examples, troubleshooting table
-- [ ] T038 Run quickstart.md validation — verify setup flow end-to-end: install → configure → auth → tg_overview → tg_feed → tg_search_ops → tg_execute. Fix any issues discovered
+- [x] T036 [P] Implement auth CLI in src/tg_mcp/auth.py — interactive phone + code + optional 2FA flow, create session file at ~/.tg-mcp/session.session with permission 600, invoked via `python -m tg_mcp.auth`
+- [x] T037 [P] Create README.md — project description, prerequisites (Python 3.11+, Telegram API creds), setup steps (install, configure, auth, register MCP), usage examples, troubleshooting table
+- [x] T038 Run quickstart.md validation — verify setup flow end-to-end: install → configure → auth → tg_overview → tg_feed → tg_search_ops → tg_execute. Fix any issues discovered
 
 ---
 
