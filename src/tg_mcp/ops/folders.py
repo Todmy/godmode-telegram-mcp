@@ -399,32 +399,60 @@ async def move_to_folder(
 @operation(
     name="create_folder",
     category="folders",
-    description="Create a new empty Telegram folder",
+    description="Create a new Telegram folder with an initial channel (Telegram requires at least one)",
     destructive=False,
     idempotent=False,
 )
 async def create_folder(
     client: Any,
     title: str,
+    channel: str,
     cache: Cache | None = None,
 ) -> str:
-    """Create a new empty Telegram folder."""
+    """Create a new Telegram folder with an initial channel."""
     if not title or not title.strip():
         raise OperationError(
             what="title parameter is required",
             expected="non-empty folder title",
-            example='tg_execute op="create_folder" params={"title": "AI News"}',
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@llm_under_hood"}',
             recovery="provide a folder name",
         )
 
+    if not channel or not channel.strip():
+        raise OperationError(
+            what="channel parameter is required (Telegram requires at least one channel per folder)",
+            expected="@handle, t.me link, or channel title",
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@llm_under_hood"}',
+            recovery="provide a channel to seed the folder with",
+        )
+
     title = title.strip()
+    channel = channel.strip()
 
     if len(title) > 12:
         raise OperationError(
             what=f"Folder title too long ({len(title)} chars). Telegram allows max 12",
             expected="title with 1-12 characters",
-            example='tg_execute op="create_folder" params={"title": "AI News"}',
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@handle"}',
             recovery="shorten the title",
+        )
+
+    # Resolve the seed channel
+    entity = await _resolve_single_channel(client, channel)
+
+    # Build InputPeer for the seed channel
+    from telethon.tl.types import InputPeerChannel, InputPeerChat
+
+    if isinstance(entity, Channel):
+        input_peer = InputPeerChannel(entity.id, getattr(entity, "access_hash", 0) or 0)
+    elif isinstance(entity, Chat):
+        input_peer = InputPeerChat(entity.id)
+    else:
+        raise OperationError(
+            what=f"Cannot add {type(entity).__name__} to folder",
+            expected="Channel or Chat entity",
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@handle"}',
+            recovery="use a channel or group, not a user",
         )
 
     # Fetch existing folders to check for duplicates and find next free ID
@@ -437,7 +465,7 @@ async def create_folder(
         raise OperationError(
             what=f"Failed to fetch folders: {type(exc).__name__}: {exc}",
             expected="successful folder fetch",
-            example='tg_execute op="create_folder" params={"title": "AI News"}',
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@handle"}',
             recovery="retry — this is a Telegram API issue",
         ) from exc
 
@@ -455,7 +483,7 @@ async def create_folder(
             raise OperationError(
                 what=f"Folder {title!r} already exists (id={info['id']})",
                 expected="unique folder title",
-                example='tg_execute op="create_folder" params={"title": "Different Name"}',
+                example='tg_execute op="create_folder" params={"title": "Different", "channel": "@handle"}',
                 recovery="choose a different title or use the existing folder",
             )
 
@@ -472,14 +500,14 @@ async def create_folder(
             recovery="delete an existing folder first",
         )
 
-    # Create the filter
+    # Create the filter with the seed channel
     from telethon.tl.types import DialogFilter, TextWithEntities
 
     new_filter = DialogFilter(
         id=new_id,
         title=TextWithEntities(text=title, entities=[]),
         pinned_peers=[],
-        include_peers=[],
+        include_peers=[input_peer],
         exclude_peers=[],
     )
 
@@ -495,14 +523,17 @@ async def create_folder(
         raise OperationError(
             what=f"Failed to create folder: {type(exc).__name__}: {exc}",
             expected="successful folder creation",
-            example='tg_execute op="create_folder" params={"title": "AI News"}',
+            example='tg_execute op="create_folder" params={"title": "AI", "channel": "@handle"}',
             recovery="retry — Telegram may have a temporary issue",
         ) from exc
 
+    handle = getattr(entity, "username", None)
+    handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
+
     lines = [
-        f"Created folder {title!r} (id={new_id}).",
+        f"Created folder {title!r} (id={new_id}) with {handle_display}.",
         "",
-        toon.hint(f'Add channels: tg_execute op="move_to_folder" params={{"channel": "@handle", "folder": "{title}"}}'),
+        toon.hint(f'Add more: tg_execute op="move_to_folder" params={{"channel": "@handle", "folder": "{title}"}}'),
         toon.hint('List folders: tg_execute op="list_folders"'),
     ]
 
