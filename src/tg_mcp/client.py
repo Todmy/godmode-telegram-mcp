@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import stat
 from pathlib import Path
 
 from telethon import TelegramClient as _TelethonClient
-from telethon.errors import FloodWaitError
+from telethon.errors import (
+    ChannelPrivateError,
+    FloodWaitError,
+    UsernameInvalidError,
+    UsernameNotOccupiedError,
+)
+from telethon.tl.types import Channel, Chat, User
 
 from tg_mcp.config import Settings, logger
 
@@ -30,6 +37,10 @@ class TelegramFloodWait(Exception):
             f"Rate limited by Telegram. Retry in {seconds}s. "
             f"This is enforced server-side and cannot be bypassed."
         )
+
+
+class ChannelResolutionError(Exception):
+    """Raised when a channel identifier cannot be resolved to a Telegram entity."""
 
 
 class TelegramClient:
@@ -147,6 +158,154 @@ class TelegramClient:
                 f"Example: python -m tg_mcp.auth to re-authenticate\n"
                 f"Recovery: check network, verify session file, re-auth if needed"
             ) from exc
+
+    # ------------------------------------------------------------------
+    # Channel resolution
+    # ------------------------------------------------------------------
+
+    # Valid @handle pattern: 5-32 alphanumeric + underscores, cannot start/end with _
+    _HANDLE_RE = re.compile(r"^@?([a-zA-Z][a-zA-Z0-9_]{3,30}[a-zA-Z0-9])$")
+
+    # t.me link patterns (including joinchat and +invite links)
+    _TGLINK_RE = re.compile(
+        r"^https?://(?:t\.me|telegram\.me)/(?:\+|joinchat/)?([a-zA-Z0-9_]+)$"
+    )
+
+    async def resolve_channel(
+        self, identifier: str
+    ) -> list[Channel | Chat]:
+        """Resolve a channel identifier to one or more Telegram entities.
+
+        Accepts:
+            - @handle (e.g. @llm_under_hood)
+            - t.me link (e.g. https://t.me/llm_under_hood)
+            - title substring (fuzzy match against subscribed channels)
+
+        Returns a list of matching Channel/Chat entities. For @handle and
+        t.me links this will be exactly one entity; for title substrings it
+        may be multiple.
+
+        Raises:
+            ChannelResolutionError: if no matching entity is found or access denied.
+            TelegramFloodWait: if rate-limited during resolution.
+        """
+        if not identifier or not identifier.strip():
+            raise ChannelResolutionError(
+                "Channel identifier is empty. "
+                "Provide a @handle, t.me link, or channel title substring."
+            )
+
+        identifier = identifier.strip()
+
+        # Try t.me link first (before handle check, as links contain handles)
+        link_match = self._TGLINK_RE.match(identifier)
+        if link_match:
+            username = link_match.group(1)
+            return [await self._resolve_by_handle(username)]
+
+        # Try @handle (with or without @ prefix)
+        handle_match = self._HANDLE_RE.match(identifier)
+        if handle_match:
+            username = handle_match.group(1)
+            return [await self._resolve_by_handle(username)]
+
+        # If identifier starts with @ but doesn't match handle format, fail explicitly
+        if identifier.startswith("@"):
+            raise ChannelResolutionError(
+                f"Invalid handle format: {identifier!r}. "
+                f"Handles must be 5-32 characters, alphanumeric and underscores only, "
+                f"starting with a letter. Example: @llm_under_hood"
+            )
+
+        # Fall back to title substring match against subscribed channels
+        return await self._resolve_by_title(identifier)
+
+    async def _resolve_by_handle(self, username: str) -> Channel | Chat:
+        """Resolve a single channel by username. Raises on failure."""
+        tg = await self.get()
+
+        try:
+            entity = await tg.get_entity(username)
+        except UsernameNotOccupiedError:
+            raise ChannelResolutionError(
+                f"Channel @{username} does not exist. "
+                f"Check the handle spelling. "
+                f"Use tg_overview to see your subscribed channels."
+            )
+        except UsernameInvalidError:
+            raise ChannelResolutionError(
+                f"Invalid username: @{username}. "
+                f"Telegram rejected this as a malformed handle."
+            )
+        except ChannelPrivateError:
+            raise ChannelResolutionError(
+                f"Channel @{username} is private or you were banned. "
+                f"You need to be a member to access this channel."
+            )
+        except FloodWaitError as e:
+            logger.warning(
+                "client.flood_wait_on_resolve",
+                extra={"username": username, "wait_seconds": e.seconds},
+            )
+            raise TelegramFloodWait(e.seconds) from e
+        except Exception as exc:
+            raise ChannelResolutionError(
+                f"Failed to resolve @{username}: {type(exc).__name__}: {exc}. "
+                f"Check the handle and try again."
+            ) from exc
+
+        if isinstance(entity, User):
+            raise ChannelResolutionError(
+                f"@{username} is a user account, not a channel or group. "
+                f"tg_feed only works with channels and groups."
+            )
+
+        if not isinstance(entity, (Channel, Chat)):
+            raise ChannelResolutionError(
+                f"@{username} resolved to an unexpected type: {type(entity).__name__}. "
+                f"Expected a channel or group."
+            )
+
+        return entity
+
+    async def _resolve_by_title(
+        self, substring: str
+    ) -> list[Channel | Chat]:
+        """Resolve channels by title substring match.
+
+        Searches all subscribed dialogs. Returns all matches.
+        Raises ChannelResolutionError if none found.
+        """
+        tg = await self.get()
+        substring_lower = substring.lower()
+        matches: list[Channel | Chat] = []
+
+        try:
+            async for dialog in tg.iter_dialogs():
+                entity = dialog.entity
+                if not isinstance(entity, (Channel, Chat)):
+                    continue
+                if substring_lower in dialog.name.lower():
+                    matches.append(entity)
+        except FloodWaitError as e:
+            logger.warning(
+                "client.flood_wait_on_title_search",
+                extra={"substring": substring, "wait_seconds": e.seconds},
+            )
+            raise TelegramFloodWait(e.seconds) from e
+        except Exception as exc:
+            raise ChannelResolutionError(
+                f"Error searching channels by title {substring!r}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        if not matches:
+            raise ChannelResolutionError(
+                f"No subscribed channel matches {substring!r}. "
+                f"Check the spelling or use tg_overview to see all channels."
+            )
+
+        return matches
 
     async def disconnect(self) -> None:
         """Gracefully disconnect from Telegram."""

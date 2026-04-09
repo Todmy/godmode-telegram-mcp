@@ -50,9 +50,9 @@
 
 **Independent Test**: Request feed from a single channel → verify text, date, views returned within 5s
 
-- [ ] T012 [US1] Implement channel resolution in src/tg_mcp/client.py — resolve @handle, t.me link, or title substring to Telethon entity. On substring multi-match: return all matching channels (FR-023). Validate handle format
-- [ ] T013 [US1] Implement tg_feed tool logic in src/tg_mcp/server.py — fetch messages via client.py for resolved channel(s), apply hours filter (default 24, max 720), limit (default 20, max 100), fields selection (default: text, date, views), folder filter, include_full_text toggle
-- [ ] T014 [US1] Wire feed response through toon.py — truncate text at 300 chars with "(truncated N chars → include_full_text=true)" hint, assemble summary line (count, channels, window, avg views), append next-step hints (full text, search, channel stats). Cache messages via cache.py (15min TTL)
+- [x] T012 [US1] Implement channel resolution in src/tg_mcp/client.py — resolve @handle, t.me link, or title substring to Telethon entity. On substring multi-match: return all matching channels (FR-023). Validate handle format
+- [x] T013 [US1] Implement tg_feed tool logic in src/tg_mcp/server.py — fetch messages via client.py for resolved channel(s), apply hours filter (default 24, max 720), limit (default 20, max 100), fields selection (default: text, date, views), folder filter, include_full_text toggle
+- [x] T014 [US1] Wire feed response through toon.py — truncate text at 300 chars with "(truncated N chars → include_full_text=true)" hint, assemble summary line (count, channels, window, avg views), append next-step hints (full text, search, channel stats). Cache messages via cache.py (15min TTL)
 
 **Checkpoint**: `tg_feed channel=@example hours=48` returns TOON-formatted messages with truncation and hints
 
@@ -64,8 +64,8 @@
 
 **Independent Test**: Request overview → verify channel names, unread counts, last post dates returned
 
-- [ ] T015 [US2] Implement tg_overview tool logic in src/tg_mcp/server.py — fetch all subscribed channels via client.py, populate metrics (unread, subscribers, posts_per_week, last_post_date), apply sort (default: unread; options: activity, subscribers, name, last_post), type filter (channels/groups/all), folder filter, min_subscribers filter, limit (default 50, max 500), fields selection
-- [ ] T016 [US2] Wire overview response through toon.py — assemble summary line (total channels, folders count, total unread, inactive count), append next-step hints (read messages, manage subscriptions, manage folders). Cache channel list via cache.py (1h TTL, 6h for subscriber counts)
+- [x] T015 [US2] Implement tg_overview tool logic in src/tg_mcp/server.py — fetch all subscribed channels via client.py, populate metrics (unread, subscribers, posts_per_week, last_post_date), apply sort (default: unread; options: activity, subscribers, name, last_post), type filter (channels/groups/all), folder filter, min_subscribers filter, limit (default 50, max 500), fields selection
+- [x] T016 [US2] Wire overview response through toon.py — assemble summary line (total channels, folders count, total unread, inactive count), append next-step hints (read messages, manage subscriptions, manage folders). Cache channel list via cache.py (1h TTL, 6h for subscriber counts)
 
 **Checkpoint**: `tg_overview sort=activity folder="AI News"` returns sorted TOON channel list with summary
 
@@ -77,10 +77,10 @@
 
 **Independent Test**: Search "react" → get schema → execute react_to_message successfully
 
-- [ ] T017 [US3] Implement tg_search_ops tool logic in src/tg_mcp/server.py — search catalog.py registry by keyword (name + description match) and optional category filter, format as "ops[N] matching 'query':" with name-description pairs, definitive empty state on 0 matches, next-step hints
-- [ ] T018 [US3] Implement tg_describe_op tool logic in src/tg_mcp/server.py — look up operation by name in catalog, format schema as structured text (op name, description, category, destructive, idempotent, params with types/required/defaults, returns, example invocation), error if not found (4-part)
-- [ ] T019 [US3] Implement tg_execute tool logic in src/tg_mcp/server.py — look up op in catalog, validate params against schema, check confirm=true for destructive ops (return warning if missing), dispatch to operation function, format response per response_format (concise=TOON, detailed=full), handle all error cases (4-part format)
-- [ ] T020 [P] [US3] Implement read-only channel operations in src/tg_mcp/ops/channels.py — list_channels (list all with basic info), channel_info (detailed single channel: description, admins, creation date), channel_stats (activity: post frequency, avg views, engagement rate, growth over N days). Register via @operation() decorator
+- [x] T017 [US3] Implement tg_search_ops tool logic in src/tg_mcp/server.py — search catalog.py registry by keyword (name + description match) and optional category filter, format as "ops[N] matching 'query':" with name-description pairs, definitive empty state on 0 matches, next-step hints
+- [x] T018 [US3] Implement tg_describe_op tool logic in src/tg_mcp/server.py — look up operation by name in catalog, format schema as structured text (op name, description, category, destructive, idempotent, params with types/required/defaults, returns, example invocation), error if not found (4-part)
+- [x] T019 [US3] Implement tg_execute tool logic in src/tg_mcp/server.py — look up op in catalog, validate params against schema, check confirm=true for destructive ops (return warning if missing), dispatch to operation function, format response per response_format (concise=TOON, detailed=full), handle all error cases (4-part format)
+- [x] T020 [P] [US3] Implement read-only channel operations in src/tg_mcp/ops/channels.py — list_channels (list all with basic info), channel_info (detailed single channel: description, admins, creation date), channel_stats (activity: post frequency, avg views, engagement rate, growth over N days). Register via @operation() decorator
 
 **Checkpoint**: Full discover→describe→execute flow works. `tg_search_ops query="channel"` → `tg_describe_op name="channel_stats"` → `tg_execute op="channel_stats" params={"channel":"@example"}`
 
