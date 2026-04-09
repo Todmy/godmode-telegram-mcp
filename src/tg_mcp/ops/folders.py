@@ -538,3 +538,184 @@ async def create_folder(
     ]
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# rename_folder
+# ---------------------------------------------------------------------------
+
+
+@operation(
+    name="rename_folder",
+    category="folders",
+    description="Rename an existing Telegram folder",
+    destructive=False,
+    idempotent=True,
+)
+async def rename_folder(
+    client: Any,
+    folder: str,
+    new_title: str,
+    cache: Cache | None = None,
+) -> str:
+    """Rename a folder."""
+    if not folder or not folder.strip():
+        raise OperationError(
+            what="folder parameter is required",
+            expected="current folder title or numeric ID",
+            example='tg_execute op="rename_folder" params={"folder": "UA", "new_title": "News"}',
+            recovery='use tg_execute op="list_folders" to see folders',
+        )
+    if not new_title or not new_title.strip():
+        raise OperationError(
+            what="new_title parameter is required",
+            expected="non-empty new folder title",
+            example='tg_execute op="rename_folder" params={"folder": "UA", "new_title": "News"}',
+            recovery="provide the new name",
+        )
+
+    folder = folder.strip()
+    new_title = new_title.strip()
+
+    if len(new_title) > 12:
+        raise OperationError(
+            what=f"New title too long ({len(new_title)} chars). Max 12",
+            expected="1-12 characters",
+            example='tg_execute op="rename_folder" params={"folder": "UA", "new_title": "News"}',
+            recovery="shorten the title",
+        )
+
+    try:
+        result = await client(GetDialogFiltersRequest())
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+
+    filters = result if isinstance(result, list) else getattr(result, "filters", result)
+
+    # Find target filter
+    target_filter = None
+    for f in filters:
+        info = _extract_folder_info(f)
+        if info is None:
+            continue
+        if info["title"].lower() == folder.lower() or str(info["id"]) == folder:
+            target_filter = f
+            break
+
+    if target_filter is None:
+        raise OperationError(
+            what=f"Folder {folder!r} not found",
+            expected="existing folder title or ID",
+            example='tg_execute op="rename_folder" params={"folder": "UA", "new_title": "News"}',
+            recovery='use tg_execute op="list_folders" to see folders',
+        )
+
+    # Update title
+    from telethon.tl.types import TextWithEntities
+
+    old_title = _extract_folder_info(target_filter)["title"]
+
+    if hasattr(target_filter, "title"):
+        target_filter.title = TextWithEntities(text=new_title, entities=[])
+
+    try:
+        await client(UpdateDialogFilterRequest(
+            id=target_filter.id,
+            filter=target_filter,
+        ))
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+    except Exception as exc:
+        logger.exception("ops.rename_folder_error")
+        raise OperationError(
+            what=f"Failed to rename folder: {type(exc).__name__}: {exc}",
+            expected="successful rename",
+            example='tg_execute op="rename_folder" params={"folder": "UA", "new_title": "News"}',
+            recovery="retry",
+        ) from exc
+
+    return f"Renamed folder {old_title!r} -> {new_title!r}."
+
+
+# ---------------------------------------------------------------------------
+# reorder_folders
+# ---------------------------------------------------------------------------
+
+
+@operation(
+    name="reorder_folders",
+    category="folders",
+    description="Reorder Telegram folders by providing a list of folder titles in desired order",
+    destructive=False,
+    idempotent=True,
+)
+async def reorder_folders(
+    client: Any,
+    order: list[str],
+    cache: Cache | None = None,
+) -> str:
+    """Reorder folders. Accepts a list of folder titles in desired order."""
+    if not order:
+        raise OperationError(
+            what="order parameter is required",
+            expected="list of folder titles in desired order",
+            example='tg_execute op="reorder_folders" params={"order": ["Fav", "AI", "Dev"]}',
+            recovery='use tg_execute op="list_folders" to see current folders',
+        )
+
+    try:
+        result = await client(GetDialogFiltersRequest())
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+
+    filters = result if isinstance(result, list) else getattr(result, "filters", result)
+
+    # Build title -> id mapping
+    title_to_id: dict[str, int] = {}
+    all_ids: list[int] = []
+    for f in filters:
+        info = _extract_folder_info(f)
+        if info is None:
+            # Default/system filters — keep their position
+            fid = getattr(f, "id", None)
+            if fid is not None:
+                all_ids.append(fid)
+            continue
+        title_to_id[info["title"].lower()] = info["id"]
+        all_ids.append(info["id"])
+
+    # Build ordered ID list
+    ordered_ids: list[int] = []
+    for title in order:
+        title_lower = title.strip().lower()
+        fid = title_to_id.get(title_lower)
+        if fid is None:
+            raise OperationError(
+                what=f"Folder {title!r} not found",
+                expected=f"one of: {', '.join(sorted(title_to_id.keys()))}",
+                example='tg_execute op="reorder_folders" params={"order": ["Fav", "AI"]}',
+                recovery='use tg_execute op="list_folders" to see folder names',
+            )
+        ordered_ids.append(fid)
+
+    # Append any folders not mentioned in order (keep them at the end)
+    for fid in all_ids:
+        if fid not in ordered_ids:
+            ordered_ids.append(fid)
+
+    from telethon.tl.functions.messages import UpdateDialogFiltersOrderRequest
+
+    try:
+        await client(UpdateDialogFiltersOrderRequest(order=ordered_ids))
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+    except Exception as exc:
+        logger.exception("ops.reorder_folders_error")
+        raise OperationError(
+            what=f"Failed to reorder: {type(exc).__name__}: {exc}",
+            expected="successful reorder",
+            example='tg_execute op="reorder_folders" params={"order": ["Fav", "AI"]}',
+            recovery="retry",
+        ) from exc
+
+    return f"Folders reordered: {' → '.join(order)}."
