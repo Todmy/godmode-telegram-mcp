@@ -11,7 +11,7 @@
 ### 1. Install
 
 ```bash
-cd /Users/todmy/github/godmode-telegram-mcp
+cd /Users/todmy/github/telegram-mcp
 pip install -e ".[dev]"
 ```
 
@@ -41,7 +41,7 @@ Add to `~/.claude/settings.json` or project `.mcp.json`:
     "telegram": {
       "command": "python",
       "args": ["-m", "tg_mcp"],
-      "cwd": "/Users/todmy/github/godmode-telegram-mcp",
+      "cwd": "/Users/todmy/github/telegram-mcp",
       "env": {
         "TG_MCP_DATA_DIR": "~/.tg-mcp"
       }

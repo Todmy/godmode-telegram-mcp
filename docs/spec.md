@@ -2,7 +2,7 @@
 
 **Created:** 2026-04-09
 **Status:** Approved for implementation
-**Location:** `/Users/todmy/github/godmode-telegram-mcp/`
+**Location:** `/Users/todmy/github/telegram-mcp/`
 
 ---
 
@@ -563,7 +563,7 @@ CREATE INDEX idx_channels_folder ON channels(folder);
 ## 10. File Structure
 
 ```
-/Users/todmy/github/godmode-telegram-mcp/
+/Users/todmy/github/telegram-mcp/
 ├── docs/
 │   └── spec.md                    # This file
 ├── src/
@@ -662,11 +662,11 @@ Add to `~/.claude/settings.json` or project `.mcp.json`:
 ```bash
 # 1. Get API credentials from my.telegram.org
 # 2. Create config
-cp /Users/todmy/github/godmode-telegram-mcp/.env.example ~/.tg-mcp/.env
+cp /Users/todmy/github/telegram-mcp/.env.example ~/.tg-mcp/.env
 # Edit .env with API_ID, API_HASH, PHONE
 
 # 3. Authenticate (one-time)
-cd /Users/todmy/github/godmode-telegram-mcp && python -m tg_mcp.auth
+cd /Users/todmy/github/telegram-mcp && python -m tg_mcp.auth
 
 # 4. MCP server auto-starts when Claude Code calls a tg_* tool
 ```

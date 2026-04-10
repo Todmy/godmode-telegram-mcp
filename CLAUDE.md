@@ -78,7 +78,7 @@ All patterns from `research/mcp-design-patterns-guide.md`:
 ## Data Locations
 
 - Session + cache + config: `~/.tg-mcp/`
-- Source code: `/Users/todmy/github/godmode-telegram-mcp/`
+- Source code: `/Users/todmy/github/telegram-mcp/`
 - Never commit `.env` or `session.session`
 
 ## Active Technologies
