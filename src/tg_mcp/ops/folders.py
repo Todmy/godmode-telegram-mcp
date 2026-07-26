@@ -16,7 +16,7 @@ from telethon.tl.functions.messages import (
 from telethon.tl.types import Channel, Chat
 
 from tg_mcp import toon
-from tg_mcp.cache import Cache
+from tg_mcp.cache import Cache, invalidate_keys, make_cache_key
 from tg_mcp.catalog import OperationError, operation
 from tg_mcp.client import TelegramFloodWait
 from tg_mcp.config import logger
@@ -385,6 +385,8 @@ async def move_to_folder(
             recovery="retry — the folder structure may have changed",
         ) from exc
 
+    await invalidate_keys(cache, make_cache_key("folders"), make_cache_key("channels"))
+
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
 
@@ -486,6 +488,8 @@ async def remove_from_folder(
             example='tg_execute op="remove_from_folder" params={"channel": "@handle", "folder": "Tech"}',
             recovery="retry",
         ) from exc
+
+    await invalidate_keys(cache, make_cache_key("folders"), make_cache_key("channels"))
 
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
@@ -629,6 +633,8 @@ async def create_folder(
             recovery="retry — Telegram may have a temporary issue",
         ) from exc
 
+    await invalidate_keys(cache, make_cache_key("folders"), make_cache_key("channels"))
+
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
 
@@ -736,6 +742,8 @@ async def rename_folder(
             recovery="retry",
         ) from exc
 
+    await invalidate_keys(cache, make_cache_key("folders"), make_cache_key("channels"))
+
     return f"Renamed folder {old_title!r} -> {new_title!r}."
 
 
@@ -819,5 +827,7 @@ async def reorder_folders(
             example='tg_execute op="reorder_folders" params={"order": ["Fav", "AI"]}',
             recovery="retry",
         ) from exc
+
+    await invalidate_keys(cache, make_cache_key("folders"))
 
     return f"Folders reordered: {' → '.join(order)}."

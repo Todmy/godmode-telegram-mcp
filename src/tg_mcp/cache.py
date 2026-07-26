@@ -79,6 +79,25 @@ def resolve_category(name: str) -> CacheCategory:
     return cat
 
 
+async def invalidate_keys(cache: Cache | None, *keys: str) -> None:
+    """Best-effort cache invalidation for write operations.
+
+    No-op when the cache or the shared db connection is unavailable, so write
+    operations never fail because of cache bookkeeping.
+    """
+    if cache is None or not keys:
+        return
+
+    from tg_mcp.db import current_db
+
+    db = current_db()
+    if db is None:
+        return
+
+    for key in keys:
+        await cache.invalidate(db, key)
+
+
 class Cache:
     """Async SQLite cache with TTL checking.
 

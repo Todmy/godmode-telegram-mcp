@@ -53,6 +53,15 @@ async def get_db(db_path: Path) -> aiosqlite.Connection:
         return conn
 
 
+def current_db() -> aiosqlite.Connection | None:
+    """Return the shared connection if one is already open, else None.
+
+    Used by write operations that need to invalidate cache entries without
+    knowing the configured db path.
+    """
+    return _db
+
+
 async def close_db() -> None:
     """Close the shared database connection if open."""
     global _db
