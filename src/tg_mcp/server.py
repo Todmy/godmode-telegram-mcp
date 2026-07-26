@@ -19,7 +19,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from telethon.errors import FloodWaitError
-from telethon.tl.types import Channel, Chat
+from telethon.tl.types import Channel, Chat, User
 
 from tg_mcp import catalog, toon
 from tg_mcp.cache import Cache
@@ -32,6 +32,7 @@ from tg_mcp.client import (
 )
 from tg_mcp.config import ConfigError, Settings, load_settings, logger
 from tg_mcp.db import get_db
+from tg_mcp.ops.channels import _entity_display
 
 # ---------------------------------------------------------------------------
 # Structured error helper
@@ -174,8 +175,9 @@ async def tg_feed(
         )
 
     # Resolve target channel(s)
+    cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
     try:
-        entities = await _resolve_feed_channels(channel, folder)
+        entities = await _resolve_feed_channels(channel, folder, cutoff)
     except ChannelResolutionError as exc:
         return _error_text(
             str(exc),
@@ -199,7 +201,6 @@ async def tg_feed(
         )
 
     # Fetch messages from all target channels
-    cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
     all_messages: list[dict[str, Any]] = []
 
     assert _settings is not None
@@ -207,12 +208,14 @@ async def tg_feed(
 
     for entity in entities:
         entity_id = entity.id
-        entity_title = getattr(entity, "title", "") or ""
-        entity_handle = getattr(entity, "username", None)
-        handle_display = f"@{entity_handle}" if entity_handle else entity_title
+        handle_display = _entity_display(entity)
+
+        # Private chats are not in the cached channels table (messages.channel_id
+        # has a FK to channels.id), so their messages are always read live.
+        cacheable = not isinstance(entity, User)
 
         # Check cache first
-        if _cache is not None:
+        if _cache is not None and cacheable:
             cached = await _cache.get_messages(db, entity_id, limit=limit)
             if cached is not None:
                 for msg in cached:
@@ -246,7 +249,7 @@ async def tg_feed(
             )
 
         # Cache fetched messages
-        if _cache is not None and fetched:
+        if _cache is not None and cacheable and fetched:
             await _cache.put_messages(db, entity_id, fetched)
 
         all_messages.extend(fetched)
@@ -802,11 +805,15 @@ def _validate_feed_params(limit: int, hours: int) -> str | None:
 async def _resolve_feed_channels(
     channel: str | None,
     folder: str | None,
-) -> list[Channel | Chat]:
+    cutoff_timestamp: float | None = None,
+) -> list[Channel | Chat | User]:
     """Resolve channel(s) for tg_feed. Returns list of entities.
 
     If channel is specified, resolves it directly.
     If channel is None, fetches all subscribed channels (optionally filtered by folder).
+    Dialogs whose most recent message predates cutoff_timestamp are skipped —
+    they cannot contribute to the window, and skipping them saves one
+    iter_messages round trip per idle dialog.
     """
     assert _tg_client is not None
 
@@ -815,12 +822,20 @@ async def _resolve_feed_channels(
 
     # No channel specified — get all subscribed channels
     tg = await _tg_client.get()
-    entities: list[Channel | Chat] = []
+    entities: list[Channel | Chat | User] = []
 
     try:
         async for dialog in tg.iter_dialogs():
             entity = dialog.entity
-            if not isinstance(entity, (Channel, Chat)):
+            # Private chats are included: list_channels type="private" lists
+            # them, so the cross-channel feed must show them too.
+            if not isinstance(entity, (Channel, Chat, User)):
+                continue
+            if (
+                cutoff_timestamp is not None
+                and dialog.date is not None
+                and dialog.date.timestamp() < cutoff_timestamp
+            ):
                 continue
             if folder is not None:
                 # Folder filtering: match dialog folder name
@@ -851,7 +866,7 @@ async def _resolve_feed_channels(
 
 async def _fetch_channel_messages(
     tg: Any,
-    entity: Channel | Chat,
+    entity: Channel | Chat | User,
     entity_id: int,
     handle_display: str,
     limit: int,

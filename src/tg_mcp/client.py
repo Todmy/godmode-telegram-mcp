@@ -173,15 +173,15 @@ class TelegramClient:
 
     async def resolve_channel(
         self, identifier: str
-    ) -> list[Channel | Chat]:
+    ) -> list[Channel | Chat | User]:
         """Resolve a channel identifier to one or more Telegram entities.
 
         Accepts:
             - @handle (e.g. @llm_under_hood)
             - t.me link (e.g. https://t.me/llm_under_hood)
-            - title substring (fuzzy match against subscribed channels)
+            - title substring (fuzzy match against subscribed channels/groups/DMs)
 
-        Returns a list of matching Channel/Chat entities. For @handle and
+        Returns a list of matching Channel/Chat/User entities. For @handle and
         t.me links this will be exactly one entity; for title substrings it
         may be multiple.
 
@@ -220,15 +220,15 @@ class TelegramClient:
         # Fall back to title substring match against subscribed channels
         return await self._resolve_by_title(identifier)
 
-    async def _resolve_by_handle(self, username: str) -> Channel | Chat:
-        """Resolve a single channel by username. Raises on failure."""
+    async def _resolve_by_handle(self, username: str) -> Channel | Chat | User:
+        """Resolve a single entity by username. Raises on failure."""
         tg = await self.get()
 
         try:
             entity = await tg.get_entity(username)
         except UsernameNotOccupiedError:
             raise ChannelResolutionError(
-                f"Channel @{username} does not exist. "
+                f"No user has {username!r} as username. "
                 f"Check the handle spelling. "
                 f"Use tg_overview to see your subscribed channels."
             )
@@ -254,36 +254,30 @@ class TelegramClient:
                 f"Check the handle and try again."
             ) from exc
 
-        if isinstance(entity, User):
-            raise ChannelResolutionError(
-                f"@{username} is a user account, not a channel or group. "
-                f"tg_feed only works with channels and groups."
-            )
-
-        if not isinstance(entity, (Channel, Chat)):
+        if not isinstance(entity, (Channel, Chat, User)):
             raise ChannelResolutionError(
                 f"@{username} resolved to an unexpected type: {type(entity).__name__}. "
-                f"Expected a channel or group."
+                f"Expected a channel, group, or user."
             )
 
         return entity
 
     async def _resolve_by_title(
         self, substring: str
-    ) -> list[Channel | Chat]:
-        """Resolve channels by title substring match.
+    ) -> list[Channel | Chat | User]:
+        """Resolve entities by title/name substring match.
 
-        Searches all subscribed dialogs. Returns all matches.
-        Raises ChannelResolutionError if none found.
+        Searches all dialogs (channels, groups, and private chats).
+        Returns all matches. Raises ChannelResolutionError if none found.
         """
         tg = await self.get()
         substring_lower = substring.lower()
-        matches: list[Channel | Chat] = []
+        matches: list[Channel | Chat | User] = []
 
         try:
             async for dialog in tg.iter_dialogs():
                 entity = dialog.entity
-                if not isinstance(entity, (Channel, Chat)):
+                if not isinstance(entity, (Channel, Chat, User)):
                     continue
                 if substring_lower in dialog.name.lower():
                     matches.append(entity)

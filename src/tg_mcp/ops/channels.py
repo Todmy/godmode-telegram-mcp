@@ -19,10 +19,10 @@ from telethon.tl.functions.channels import (
     JoinChannelRequest,
     LeaveChannelRequest,
 )
-from telethon.tl.types import Channel, Chat, InputNotifyPeer, InputPeerNotifySettings
+from telethon.tl.types import Channel, Chat, InputNotifyPeer, InputPeerNotifySettings, User
 
 from tg_mcp import toon
-from tg_mcp.cache import Cache, CacheCategory, make_cache_key
+from tg_mcp.cache import Cache, CacheCategory, invalidate_keys, make_cache_key
 from tg_mcp.catalog import OperationError, operation
 from tg_mcp.client import ChannelResolutionError, TelegramFloodWait
 from tg_mcp.config import logger
@@ -49,13 +49,13 @@ async def list_channels(
 ) -> str:
     """List all subscribed channels with basic info."""
     # Validate type
-    valid_types = {"channels", "groups", "all"}
+    valid_types = {"channels", "groups", "private", "all"}
     if type not in valid_types:
         raise OperationError(
             what=f"Invalid type filter: {type!r}",
             expected=f"one of: {', '.join(sorted(valid_types))}",
-            example='tg_execute op="list_channels" params={"type": "channels"}',
-            recovery="use 'channels', 'groups', or 'all'",
+            example='tg_execute op="list_channels" params={"type": "private"}',
+            recovery="use 'channels', 'groups', 'private', or 'all'",
         )
 
     # Validate sort
@@ -82,27 +82,43 @@ async def list_channels(
     try:
         async for dialog in client.iter_dialogs():
             entity = dialog.entity
-            if not isinstance(entity, (Channel, Chat)):
+            is_private = isinstance(entity, User)
+            is_channel_or_group = isinstance(entity, (Channel, Chat))
+
+            if not is_private and not is_channel_or_group:
                 continue
 
-            is_channel = isinstance(entity, Channel) and entity.broadcast
+            if is_private:
+                entity_type = "private"
+            elif isinstance(entity, Channel) and entity.broadcast:
+                entity_type = "channel"
+            else:
+                entity_type = "group"
 
-            # Apply type filter early to avoid unnecessary processing
-            if type == "channels" and not is_channel:
+            if type == "channels" and entity_type != "channel":
                 continue
-            if type == "groups" and is_channel:
+            if type == "groups" and entity_type != "group":
+                continue
+            if type == "private" and entity_type != "private":
                 continue
 
             handle = getattr(entity, "username", None)
-            subscribers = getattr(entity, "participants_count", None)
+            subscribers = getattr(entity, "participants_count", None) or 0
+
+            if is_private:
+                first = getattr(entity, "first_name", "") or ""
+                last = getattr(entity, "last_name", "") or ""
+                title = dialog.name or f"{first} {last}".strip()
+            else:
+                title = dialog.name or getattr(entity, "title", "")
 
             channels.append({
-                "title": dialog.name or getattr(entity, "title", ""),
+                "title": title,
                 "handle": f"@{handle}" if handle else "",
-                "subscribers": subscribers or 0,
+                "subscribers": subscribers,
                 "unread": dialog.unread_count or 0,
                 "last_post": dialog.date.isoformat() if dialog.date else "",
-                "type": "channel" if is_channel else "group",
+                "type": entity_type,
             })
     except FloodWaitError as e:
         raise TelegramFloodWait(e.seconds) from e
@@ -179,6 +195,37 @@ async def channel_info(
 
     # Resolve the channel entity
     entity = await _resolve_single_channel(client, channel)
+
+    # Private chat (User) — no title, no participants; report identity instead
+    if isinstance(entity, User):
+        first = getattr(entity, "first_name", "") or ""
+        last = getattr(entity, "last_name", "") or ""
+        name = f"{first} {last}".strip()
+        username = getattr(entity, "username", None)
+
+        lines = [
+            f"private chat: {name or (f'@{username}' if username else entity.id)}",
+            f"handle: @{username}" if username else "handle: (none)",
+            f"id: {entity.id}",
+            "type: private",
+        ]
+        if getattr(entity, "phone", None):
+            lines.append(f"phone: +{entity.phone}")
+        lines.append(f"bot: {'yes' if getattr(entity, 'bot', False) else 'no'}")
+        lines.append(f"contact: {'yes' if getattr(entity, 'contact', False) else 'no'}")
+        lines.append(f"verified: {'yes' if getattr(entity, 'verified', False) else 'no'}")
+
+        target = f"@{username}" if username else str(entity.id)
+        lines.append("")
+        lines.append(toon.hint(f'Read messages: tg_feed channel="{target}"'))
+        lines.append(
+            toon.hint(
+                f'Send a message: tg_execute op="send_message" '
+                f'params={{"chat": "{target}", "text": "..."}} confirm=true'
+            )
+        )
+
+        return "\n".join(lines)
 
     # Get full channel info (works for Channel entities)
     if isinstance(entity, Channel):
@@ -481,6 +528,8 @@ async def subscribe(
             recovery="check that the channel exists and is accessible",
         ) from exc
 
+    await invalidate_keys(cache, make_cache_key("channels"))
+
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
     title = getattr(entity, "title", "")
@@ -519,7 +568,8 @@ async def unsubscribe(
         )
 
     channel = channel.strip()
-    entity = await _resolve_single_channel(client, channel)
+    # Destructive: never let a fuzzy title sweep into a private chat.
+    entity = await _resolve_single_channel(client, channel, allow_users=False)
 
     try:
         await client(LeaveChannelRequest(entity))
@@ -533,6 +583,8 @@ async def unsubscribe(
             example=f'tg_execute op="unsubscribe" params={{"channel": "{channel}"}} confirm=true',
             recovery="check channel access and retry",
         ) from exc
+
+    await invalidate_keys(cache, make_cache_key("channels"))
 
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
@@ -589,6 +641,8 @@ async def mute_channel(
             recovery="check channel access and retry",
         ) from exc
 
+    await invalidate_keys(cache, make_cache_key("channels"))
+
     handle = getattr(entity, "username", None)
     handle_display = f"@{handle}" if handle else getattr(entity, "title", channel)
     action = "Muted" if mute else "Unmuted"
@@ -601,23 +655,77 @@ async def mute_channel(
 # ---------------------------------------------------------------------------
 
 
+def _entity_display(entity: Any) -> str:
+    """Human-readable name for a Channel/Chat/User entity."""
+    handle = getattr(entity, "username", None)
+
+    if isinstance(entity, User):
+        first = getattr(entity, "first_name", "") or ""
+        last = getattr(entity, "last_name", "") or ""
+        name = f"{first} {last}".strip()
+        if not name:
+            return f"@{handle}" if handle else f"id:{entity.id}"
+        return f"{name} (@{handle})" if handle else name
+
+    if handle:
+        return f"@{handle}"
+    return getattr(entity, "title", "") or f"id:{getattr(entity, 'id', '?')}"
+
+
 async def _resolve_single_channel(
-    client: Any, identifier: str
-) -> Channel | Chat:
-    """Resolve a channel identifier to a single entity.
+    client: Any,
+    identifier: str,
+    *,
+    allow_users: bool = True,
+    allow_user_fuzzy: bool = True,
+) -> Channel | Chat | User:
+    """Resolve a channel/group/user identifier to a single entity.
+
+    Args:
+        allow_users: when False, private chats (User entities) are rejected
+            outright — used by operations that only make sense on channels.
+        allow_user_fuzzy: when False, title-substring search never matches a
+            private chat. Destructive operations set this so that a vague
+            title like "Marketing" can never silently resolve to a contact;
+            DMs must then be named by exact @handle or numeric id.
 
     Raises OperationError if identifier resolves to multiple entities or none.
     """
-    # Try @handle or t.me link first
-    from tg_mcp.client import TelegramClient as _TgClient
-
-    # Direct resolution via Telethon
     import re
 
     handle_re = re.compile(r"^@?([a-zA-Z][a-zA-Z0-9_]{3,30}[a-zA-Z0-9])$")
     link_re = re.compile(
         r"^https?://(?:t\.me|telegram\.me)/(?:\+|joinchat/)?([a-zA-Z0-9_]+)$"
     )
+    id_re = re.compile(r"^-?\d+$")
+
+    # Exact numeric id — the unambiguous way to name a private chat
+    if id_re.match(identifier):
+        try:
+            entity = await client.get_entity(int(identifier))
+        except Exception as exc:
+            raise OperationError(
+                what=f"Cannot resolve id {identifier}: {type(exc).__name__}: {exc}",
+                expected="an id of a dialog you have seen in this session",
+                example='params={"channel": "@llm_under_hood"}',
+                recovery="use tg_overview to find the dialog, then pass its @handle",
+            ) from exc
+
+        if isinstance(entity, User) and not allow_users:
+            raise OperationError(
+                what=f"id {identifier} is a private chat, not a channel or group",
+                expected="channel or group entity",
+                example='params={"channel": "@llm_under_hood"}',
+                recovery="this operation does not apply to private chats",
+            )
+        if not isinstance(entity, (Channel, Chat, User)):
+            raise OperationError(
+                what=f"id {identifier} resolved to unexpected type: {type(entity).__name__}",
+                expected="channel, group, or user entity",
+                example='params={"channel": "@llm_under_hood"}',
+                recovery="provide a valid handle or id",
+            )
+        return entity
 
     username: str | None = None
     link_match = link_re.match(identifier)
@@ -634,21 +742,28 @@ async def _resolve_single_channel(
         except Exception as exc:
             raise OperationError(
                 what=f"Cannot resolve @{username}: {type(exc).__name__}: {exc}",
-                expected="valid channel @handle or t.me link",
+                expected="valid @handle or t.me link",
                 example='params={"channel": "@llm_under_hood"}',
                 recovery="check the handle spelling or use tg_overview to see channels",
             ) from exc
 
-        if not isinstance(entity, (Channel, Chat)):
+        if isinstance(entity, User) and not allow_users:
             raise OperationError(
-                what=f"@{username} is not a channel or group (got {type(entity).__name__})",
+                what=f"@{username} is a user account, not a channel or group",
                 expected="channel or group entity",
                 example='params={"channel": "@llm_under_hood"}',
-                recovery="provide a channel or group handle, not a user",
+                recovery="this operation does not apply to private chats",
+            )
+
+        if not isinstance(entity, (Channel, Chat, User)):
+            raise OperationError(
+                what=f"@{username} resolved to unexpected type: {type(entity).__name__}",
+                expected="channel, group, or user entity",
+                example='params={"channel": "@llm_under_hood"}',
+                recovery="provide a valid handle",
             )
         return entity
 
-    # If starts with @ but didn't match handle format
     if identifier.startswith("@"):
         raise OperationError(
             what=f"Invalid handle format: {identifier!r}",
@@ -657,14 +772,18 @@ async def _resolve_single_channel(
             recovery="check the handle format",
         )
 
-    # Title substring search
-    matches: list[Channel | Chat] = []
+    # Title/name substring search across dialogs.
+    # Private chats participate only when fuzzy user matching is allowed.
+    allowed_types: tuple[type, ...] = (
+        (Channel, Chat, User) if allow_users and allow_user_fuzzy else (Channel, Chat)
+    )
+    matches: list[Channel | Chat | User] = []
     identifier_lower = identifier.lower()
 
     try:
         async for dialog in client.iter_dialogs():
             entity = dialog.entity
-            if not isinstance(entity, (Channel, Chat)):
+            if not isinstance(entity, allowed_types):
                 continue
             if identifier_lower in dialog.name.lower():
                 matches.append(entity)
@@ -673,19 +792,22 @@ async def _resolve_single_channel(
 
     if not matches:
         raise OperationError(
-            what=f"No channel matches {identifier!r}",
-            expected="channel title substring matching a subscribed channel",
+            what=f"No dialog matches {identifier!r}",
+            expected="title/name substring matching a dialog"
+            if User in allowed_types
+            else "title substring matching a channel or group "
+            "(private chats must be named by exact @handle or id here)",
             example='params={"channel": "LLM Under"}',
-            recovery="check spelling or use tg_overview to see all channels",
+            recovery="check spelling or use tg_overview to see all dialogs",
         )
 
     if len(matches) > 1:
-        names = [getattr(m, "title", "?") for m in matches[:5]]
+        names = [_entity_display(m) for m in matches[:5]]
         raise OperationError(
-            what=f"Multiple channels match {identifier!r}: {', '.join(names)}",
-            expected="unambiguous channel identifier",
+            what=f"Multiple dialogs match {identifier!r}: {', '.join(names)}",
+            expected="unambiguous identifier",
             example='params={"channel": "@exact_handle"}',
-            recovery="use exact @handle to disambiguate",
+            recovery="use exact @handle or more specific title substring to disambiguate",
         )
 
     return matches[0]
