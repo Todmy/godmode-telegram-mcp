@@ -317,6 +317,31 @@ def describe(name: str) -> str:
     return "\n".join(lines)
 
 
+async def _build_confirm_preview(
+    entry: OperationEntry,
+    client: Any,
+    params: dict[str, Any],
+) -> str:
+    """Render an operation-specific preview of what confirm=true would do.
+
+    An operation opts in by setting a ``confirm_preview`` attribute on its
+    function: ``async def preview(client, params) -> str``. Failures are
+    swallowed — a missing preview must never mask the confirmation guard.
+    """
+    preview_fn = getattr(entry.func, "confirm_preview", None)
+    if preview_fn is None or client is None:
+        return ""
+
+    try:
+        return await preview_fn(client, params) or ""
+    except OperationError as exc:
+        # Resolution failed — surfacing why is more useful than a bare guard.
+        return exc.format()
+    except Exception:
+        logger.exception("catalog.confirm_preview_error", extra={"op": entry.name})
+        return ""
+
+
 async def execute(
     name: str,
     *,
@@ -335,8 +360,12 @@ async def execute(
     # Destructive guard
     if entry.destructive and not confirm:
         param_summary = ", ".join(f"{k}={v!r}" for k, v in params.items())
+        preview = await _build_confirm_preview(entry, client, params)
         raise OperationError(
-            what=f"Operation {name!r} is destructive and requires confirmation.",
+            what=(
+                f"Operation {name!r} is destructive and requires confirmation."
+                + (f"\n\n{preview}" if preview else "")
+            ),
             expected="Pass confirm=true to proceed.",
             example=f'tg_execute op="{name}" params={{{param_summary}}} confirm=true',
             recovery="Review the operation description with tg_describe_op first.",

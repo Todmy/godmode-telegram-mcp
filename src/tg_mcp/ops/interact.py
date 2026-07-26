@@ -26,7 +26,155 @@ from tg_mcp.cache import Cache
 from tg_mcp.catalog import OperationError, operation
 from tg_mcp.client import TelegramFloodWait
 from tg_mcp.config import logger
-from tg_mcp.ops.channels import _resolve_single_channel
+from tg_mcp.ops.channels import _entity_display, _resolve_single_channel
+
+
+# ---------------------------------------------------------------------------
+# send_message
+# ---------------------------------------------------------------------------
+
+_SAVED_MESSAGES_ALIASES = {"me", "self", "saved", "saved messages"}
+
+
+async def _resolve_message_target(client: Any, chat: str) -> tuple[Any, str]:
+    """Resolve a send target to (entity, display name).
+
+    Private chats are never matched by fuzzy title substring here — sending a
+    message is irreversible, so a DM must be named by exact @handle or id.
+    """
+    if chat.lower() in _SAVED_MESSAGES_ALIASES:
+        entity = await client.get_entity("me")
+        return entity, "Saved Messages"
+
+    entity = await _resolve_single_channel(client, chat, allow_user_fuzzy=False)
+    return entity, _entity_display(entity)
+
+
+@operation(
+    name="send_message",
+    category="interact",
+    description=(
+        "Send a new message to a channel, group, or private chat (DM). "
+        "Destructive: the message reaches a real recipient and cannot be "
+        "unsent from here, so confirm=true is required"
+    ),
+    destructive=True,
+    idempotent=False,
+)
+async def send_message(
+    client: Any,
+    chat: str,
+    text: str,
+    reply_to: int = 0,
+    cache: Cache | None = None,
+) -> str:
+    """Send a message to a chat, optionally as a reply."""
+    # --- Input validation ---
+    if not chat or not chat.strip():
+        raise OperationError(
+            what="chat parameter is required",
+            expected="@handle, numeric id, chat title, or 'me' for Saved Messages",
+            example='tg_execute op="send_message" params={"chat": "me", "text": "note to self"} confirm=true',
+            recovery="provide a chat identifier",
+        )
+
+    if not text or not text.strip():
+        raise OperationError(
+            what="text parameter is required and cannot be empty",
+            expected="non-empty message text",
+            example='tg_execute op="send_message" params={"chat": "me", "text": "hello"} confirm=true',
+            recovery="provide the message content",
+        )
+
+    if reply_to < 0:
+        raise OperationError(
+            what=f"reply_to must be a positive message id or 0 for none, got: {reply_to}",
+            expected="valid Telegram message ID",
+            example='tg_execute op="send_message" params={"chat": "me", "text": "hi", "reply_to": 123} confirm=true',
+            recovery="use a message ID from search or feed results, or omit reply_to",
+        )
+
+    chat = chat.strip()
+    text = text.strip()
+
+    entity, target_display = await _resolve_message_target(client, chat)
+
+    # --- Send ---
+    try:
+        result = await client.send_message(
+            entity,
+            text,
+            reply_to=reply_to or None,
+        )
+    except FloodWaitError as e:
+        raise TelegramFloodWait(e.seconds) from e
+    except (MsgIdInvalidError, MessageIdInvalidError):
+        raise OperationError(
+            what=f"Reply target message {reply_to} not found in {target_display}",
+            expected="existing message ID in the same chat",
+            example=f'tg_execute op="search_messages" params={{"channel": "{chat}", "query": "keyword"}}',
+            recovery="the message may have been deleted — omit reply_to or pick another id",
+        )
+    except ChannelPrivateError:
+        raise OperationError(
+            what=f"Chat {chat} is private or you were banned",
+            expected="accessible chat",
+            example='tg_execute op="send_message" params={"chat": "me", "text": "hello"} confirm=true',
+            recovery="you need to be a member to post in this chat",
+        )
+    except Exception as exc:
+        logger.exception(
+            "ops.send_message_error",
+            extra={"chat": chat, "reply_to": reply_to},
+        )
+        raise OperationError(
+            what=f"Failed to send message: {type(exc).__name__}: {exc}",
+            expected="successful message delivery",
+            example=f'tg_execute op="send_message" params={{"chat": "{chat}", "text": "hello"}} confirm=true',
+            recovery="check that you can post in this chat and retry",
+        ) from exc
+
+    message_id = getattr(result, "id", 0)
+    timestamp = toon.format_date(getattr(result, "date", None))
+
+    lines = [
+        f"Sent message {message_id} to {target_display}.",
+        "",
+        f"message_id: {message_id}",
+        f"chat: {target_display}",
+        f"timestamp: {timestamp}",
+    ]
+    if reply_to:
+        lines.append(f"reply_to: {reply_to}")
+    lines.append("text:")
+    lines.append(text)
+
+    return "\n".join(lines)
+
+
+async def _send_message_preview(client: Any, params: dict[str, Any]) -> str:
+    """Confirmation preview: resolved recipient plus the exact text to send."""
+    chat = str(params.get("chat") or "").strip()
+    text = str(params.get("text") or "")
+    reply_to = params.get("reply_to")
+
+    if not chat or not text.strip():
+        return ""
+
+    _entity, target_display = await _resolve_message_target(client, chat)
+
+    lines = [f"Will send to: {target_display}"]
+    if reply_to:
+        lines.append(f"As a reply to message: {reply_to}")
+    lines.append(f"Message text ({len(text)} chars):")
+    lines.append("---")
+    lines.append(text)
+    lines.append("---")
+    lines.append("This reaches a real recipient and cannot be undone from here.")
+    return "\n".join(lines)
+
+
+send_message.confirm_preview = _send_message_preview
 
 
 # ---------------------------------------------------------------------------
