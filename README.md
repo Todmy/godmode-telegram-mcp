@@ -243,6 +243,7 @@ tg_execute op="search_messages" params={"query": "AI governance", "hours": 168}
 |---|---|
 | `search_messages` | Keyword search across all or specific channels |
 | `get_message` | Fetch single message with full content and media metadata |
+| `download_media` | Download a message's attached file to disk (default `~/Downloads/Telegram Desktop`, override with `TG_MCP_DOWNLOAD_DIR`) |
 | `message_history` | Paginated message history for a channel |
 | `who_posted_first` | Find which channel posted about a topic first |
 
